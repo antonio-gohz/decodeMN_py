@@ -142,12 +142,91 @@ def decomposition_offline(emg_filt, fs, exfactor,nbIterations, preOptFilters=Non
 
     # Remove duplicates
     if removeDuplicates:
-        PulseT, Distime, idsnewVec = remduplicates(PulseT, Distime, Distime, round(fs / 40), 0.00025, 0.3, fs)
+        PulseT, Distime, idsnewVec = remduplicates(PulseT, Distime, Distime.copy(), round(fs / 40), 0.00025, 0.3, fs)
         SIL = SIL[idsnewVec]
         COV = COV[idsnewVec]
         MUFilters = MUFilters[:, idsnewVec]
         normIPT = normIPT[idsnewVec]
         centroids = centroids[idsnewVec, :]
         idsnew = idsnew[idsnewVec]
+    
+    # Create spikeTrains matrix with zeros
+    spikeTrains = np.zeros( PulseT.shape)
+    dischargeRates = np.full(PulseT.shape, np.nan)
 
-    return MUFilters, SIL, COV, PulseT, Distime, normIPT, centroids
+    for i, times in enumerate(Distime):
+        spikeTrains[i, times] = 1  # Assumes Distime[i] contains indices (integers < nSamples)
+        isi = np.diff(times) / fs  # Convert sample diff to seconds
+        idr = 1 / isi  # Instantaneous discharge rate in Hz
+        dischargeRates[i, times[1:]] = idr  # Store IDRs starting from 2nd discharge
+
+    sources = {
+    "spikeTrains": spikeTrains,
+    "dischargeRates": dischargeRates,
+    "PulseT": PulseT,
+    "Distime": Distime,
+    "SIL": SIL,
+    "COV": COV,
+    }
+
+    decompParams = {
+        "MUFilters": MUFilters,
+        "SIL": SIL,
+        "COV": COV,
+        "PulseT": PulseT,
+        "Distime": Distime,
+        "normIPT": normIPT,
+        "centroids": centroids,
+        "exfactor": exfactor,
+    }
+
+    # Plotting
+    nMUs, nSamples = PulseT.shape
+
+    # Normalize the discharge rates to 40 Hz (or any specific target frequency)
+    normalized_dischargeRates = dischargeRates / np.nanmax(dischargeRates) * 40
+
+    # Compute median discharge rates for y-ticks
+    meanDR = np.nanmean(dischargeRates, axis=1)
+
+    # Create time vector in seconds
+    tVec = np.arange(nSamples) / fs
+
+    # Create color array for each MN (example using a colormap)
+    colors = plt.cm.viridis(np.linspace(0, 1, nMUs))
+
+    # Set up subplots
+    fig, ax = plt.subplots(1, 2, figsize=(12, 6), sharex=True, sharey=False)
+
+    # Plot spike trains
+    for i in range(nMUs):
+        ax[0].plot(tVec, (0.8 * spikeTrains[i, :] + i + 1 - 0.4),color=colors[i])
+
+    # Plot discharge rates
+    for i in range(nMUs):
+        ax[1].plot(tVec, normalized_dischargeRates[i, :] / 40 + i + 1 - 0.5, '.', markersize=10, color=colors[i])
+
+
+
+    # Set y-ticks for both plots
+    ax[0].set_yticks(np.arange(1,nMUs+1))
+    ax[0].set_yticklabels([str(i) for i in range(1,nMUs+1)])
+
+    ax[1].set_yticks(np.arange(1,nMUs+1))
+    ax[1].set_yticklabels([f'{meanDR[i]:.1f}' for i in range(nMUs)])
+
+    # Label axes
+    ax[0].set_title("Spike Trains (Raster Plot)")
+    ax[0].set_ylabel("Motor Units")
+    ax[0].set_xlabel("Time (s)")
+
+    ax[1].set_title("Normalized Instantaneous Discharge Rates")
+    ax[1].set_ylabel("Median DR (Hz)")
+    ax[1].set_xlabel("Time (s)")
+
+    # Show the plot
+    #plt.tight_layout()
+    plt.draw()
+    plt.pause(0.1)
+
+    return sources, decompParams
